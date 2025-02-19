@@ -28,31 +28,31 @@ struct FsCommand {
     new_text: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct ChildMessage {
-    child_id: String,
-    text: String,
-    data: Value,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
+// Using the exact same definitions as chat
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct ChainEntry {
     parent: Option<String>,
     id: Option<String>,
     data: MessageData,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(untagged)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 enum MessageData {
     Chat(Message),
     ChildRollup(Vec<ChildMessage>),
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct Message {
     role: String,
     content: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct ChildMessage {
+    child_id: String,
+    text: String,
+    data: Value,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -87,8 +87,6 @@ impl State {
     fn load_message(&self, id: &str) -> Result<ChainEntry, Box<dyn std::error::Error>> {
         let store_id = self.store_id.as_ref().ok_or("Store ID not set")?;
 
-        log(&format!("Loading message with ID: {}", id));
-
         let req = Request {
             _type: "request".to_string(),
             data: Action::Get(id.to_string()),
@@ -97,16 +95,30 @@ impl State {
         let request_bytes = serde_json::to_vec(&req)?;
         let response_bytes = request(store_id, &request_bytes)?;
 
+        log(&format!(
+            "Response: {}",
+            String::from_utf8_lossy(&response_bytes)
+        ));
+
         let response: Value = serde_json::from_slice(&response_bytes)?;
-        log(&format!("Response: {}", response));
         if response["status"].as_str() == Some("ok") {
-            if let Some(value) = response.get("value") {
+            if let Some(value) = response
+                .get("data")
+                .and_then(|d| d.get("Get"))
+                .and_then(|g| g.get("value"))
+            {
                 let bytes = value
                     .as_array()
                     .ok_or("Expected byte array")?
                     .iter()
                     .map(|v| v.as_u64().unwrap_or(0) as u8)
                     .collect::<Vec<u8>>();
+
+                log(&format!(
+                    "Decoded message bytes: {}",
+                    String::from_utf8_lossy(&bytes)
+                ));
+
                 let entry: ChainEntry = serde_json::from_slice(&bytes)?;
                 return Ok(entry);
             }
@@ -120,7 +132,6 @@ impl State {
         for cmd in commands {
             let path = self.resolve_path(&cmd.path);
 
-            // Check permissions first
             let operation_allowed = match cmd.operation.as_str() {
                 "read-file" | "list-files" => self.permissions.contains(&"read".to_string()),
                 "write-file" | "create-dir" => self.permissions.contains(&"write".to_string()),
@@ -292,7 +303,6 @@ impl MessageServerClientGuest for Component {
                         let response = ChildMessage {
                             child_id: child_id.to_string(),
                             text: "🤖 Filesystem operations are now available! You can use commands like:
-
                                   - read-file: Read file contents
                                   - write-file: Write to a file
                                   - list-files: List directory contents
@@ -321,7 +331,6 @@ impl MessageServerClientGuest for Component {
                     text: "❌ Failed to get child_id or store_id from introduction".to_string(),
                     data: json!({}),
                 };
-
                 (
                     serde_json::to_vec(&response).unwrap(),
                     serde_json::to_vec(&current_state).unwrap(),
@@ -333,6 +342,7 @@ impl MessageServerClientGuest for Component {
                     request["data"]["head"].as_str(),
                 ) {
                     log(&format!("Processing head update: {}", head));
+                    log(&format!("Loading message with ID: {}", head));
 
                     // Load the message at head
                     match current_state.load_message(head) {
@@ -342,24 +352,24 @@ impl MessageServerClientGuest for Component {
                             match entry.data {
                                 MessageData::Chat(msg) => {
                                     log(&format!("Processing chat message: {}", msg.content));
-                                    // Only process user messages
-                                    if msg.role == "user" {
-                                        // Extract and process commands
-                                        let commands = State::extract_fs_commands(&msg.content);
-                                        if !commands.is_empty() {
-                                            log(&format!("Found {} commands", commands.len()));
-                                            let results =
-                                                current_state.process_fs_commands(commands);
-                                            let response = ChildMessage {
-                                                child_id: child_id.clone(),
-                                                text: results.join(""),
-                                                data: json!({"head": head}),
-                                            };
-                                            return (
-                                                serde_json::to_vec(&response).unwrap(),
-                                                serde_json::to_vec(&current_state).unwrap(),
-                                            );
-                                        }
+                                    // Extract and process commands
+                                    let commands = State::extract_fs_commands(&msg.content);
+                                    if !commands.is_empty() {
+                                        log(&format!("Found {} commands", commands.len()));
+                                        let results = current_state.process_fs_commands(commands);
+                                        let response = ChildMessage {
+                                            child_id: child_id.clone(),
+                                            text: results.join(
+                                                "
+
+",
+                                            ),
+                                            data: json!({"head": head}),
+                                        };
+                                        return (
+                                            serde_json::to_vec(&response).unwrap(),
+                                            serde_json::to_vec(&current_state).unwrap(),
+                                        );
                                     }
                                 }
                                 MessageData::ChildRollup(_) => {
@@ -401,7 +411,6 @@ impl MessageServerClientGuest for Component {
                     text: format!("❓ Unknown message type: {}", other),
                     data: json!({}),
                 };
-
                 (
                     serde_json::to_vec(&response).unwrap(),
                     serde_json::to_vec(&current_state).unwrap(),
@@ -429,3 +438,4 @@ impl MessageServerClientGuest for Component {
 }
 
 bindings::export!(Component with_types_in bindings);
+
