@@ -87,6 +87,8 @@ impl State {
     fn load_message(&self, id: &str) -> Result<ChainEntry, Box<dyn std::error::Error>> {
         let store_id = self.store_id.as_ref().ok_or("Store ID not set")?;
 
+        log(&format!("Loading message with ID: {}", id));
+
         let req = Request {
             _type: "request".to_string(),
             data: Action::Get(id.to_string()),
@@ -96,6 +98,7 @@ impl State {
         let response_bytes = request(store_id, &request_bytes)?;
 
         let response: Value = serde_json::from_slice(&response_bytes)?;
+        log(&format!("Response: {}", response));
         if response["status"].as_str() == Some("ok") {
             if let Some(value) = response.get("value") {
                 let bytes = value
@@ -108,7 +111,7 @@ impl State {
                 return Ok(entry);
             }
         }
-        Err("Failed to load message".into())
+        Err("Failed to load message from store".into())
     }
 
     fn process_fs_commands(&self, commands: Vec<FsCommand>) -> Vec<String> {
