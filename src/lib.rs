@@ -3,6 +3,7 @@ mod bindings;
 use bindings::exports::ntwk::theater::actor::Guest as ActorGuest;
 use bindings::exports::ntwk::theater::message_server_client::Guest as MessageServerClientGuest;
 use bindings::ntwk::theater::filesystem::{read_file, write_file, list_files, create_dir, delete_file};
+use bindings::ntwk::theater::message_server_host::request;
 use bindings::ntwk::theater::runtime::log;
 use bindings::ntwk::theater::types::Json;
 use serde::{Deserialize, Serialize};
@@ -38,6 +39,37 @@ struct ChildMessage {
     data: Value,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct ChainEntry {
+    parent: Option<String>,
+    id: Option<String>,
+    data: MessageData,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+enum MessageData {
+    Chat(Message),
+    ChildRollup(Vec<ChildMessage>),
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct Message {
+    role: String,
+    content: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Request {
+    _type: String,
+    data: Action,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+enum Action {
+    Get(String),
+}
+
 impl State {
     fn new(child_id: String, store_id: String) -> Self {
         Self {
@@ -56,17 +88,56 @@ impl State {
         }
     }
 
+    fn load_message(&self, id: &str) -> Result<ChainEntry, Box<dyn std::error::Error>> {
+        let req = Request {
+            _type: "request".to_string(),
+            data: Action::Get(id.to_string()),
+        };
+
+        let request_bytes = serde_json::to_vec(&req)?;
+        let response_bytes = request(&self.store_id, &request_bytes)?;
+
+        let response: Value = serde_json::from_slice(&response_bytes)?;
+        if response["status"].as_str() == Some("ok") {
+            if let Some(value) = response.get("value") {
+                let bytes = value
+                    .as_array()
+                    .ok_or("Expected byte array")?
+                    .iter()
+                    .map(|v| v.as_u64().unwrap_or(0) as u8)
+                    .collect::<Vec<u8>>();
+                let entry: ChainEntry = serde_json::from_slice(&bytes)?;
+                return Ok(entry);
+            }
+        }
+        Err("Failed to load message".into())
+    }
+
     fn process_fs_commands(&self, commands: Vec<FsCommand>) -> Vec<String> {
         let mut results = Vec::new();
 
         for cmd in commands {
             let path = self.resolve_path(&cmd.path);
+            
+            // Check permissions first
+            let operation_allowed = match cmd.operation.as_str() {
+                "read-file" | "list-files" => self.permissions.contains(&"read".to_string()),
+                "write-file" | "create-dir" => self.permissions.contains(&"write".to_string()),
+                "delete-file" => self.permissions.contains(&"write".to_string()),
+                _ => false,
+            };
+
+            if !operation_allowed {
+                results.push(format!("❌ Operation '{}' not permitted", cmd.operation));
+                continue;
+            }
+
             let result = match cmd.operation.as_str() {
                 "read-file" => {
                     match read_file(&path) {
                         Ok(content) => {
                             if let Ok(content_str) = String::from_utf8(content) {
-                                format!("📄 File content of '{}': \n{}", cmd.path, content_str)
+                                format!("📄 File content of '{}': \n```\n{}\n```", cmd.path, content_str)
                             } else {
                                 format!("❌ Failed to decode file content of '{}'", cmd.path)
                             }
@@ -86,7 +157,13 @@ impl State {
                 }
                 "list-files" => {
                     match list_files(&path) {
-                        Ok(files) => format!("📁 Contents of '{}': \n{}", cmd.path, files.join("\n")),
+                        Ok(files) => {
+                            let formatted_files = files.iter()
+                                .map(|f| format!("  - {}", f))
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            format!("📁 Contents of '{}':\n{}", cmd.path, formatted_files)
+                        }
                         Err(e) => format!("❌ Failed to list files in '{}': {}", cmd.path, e),
                     }
                 }
@@ -208,33 +285,72 @@ impl MessageServerClientGuest for Component {
                           - write-file: Write to a file\n\
                           - list-files: List directory contents\n\
                           - create-dir: Create a new directory\n\
-                          - delete-file: Delete a file".to_string(),
+                          - delete-file: Delete a file\n\n\
+                          Use XML syntax like:\n\
+                          ```xml\n\
+                          <fs-command>\n\
+                            <operation>list-files</operation>\n\
+                            <path>.</path>\n\
+                          </fs-command>\n\
+                          ```".to_string(),
                     data: json!({}),
                 };
 
                 (serde_json::to_vec(&response).unwrap(), serde_json::to_vec(&state).unwrap())
             }
             Some("head-update") => {
-                // Get the message content from the store
                 if let Some(head) = request["data"]["head"].as_str() {
-                    // Parse any filesystem commands in the message
-                    // For now, just acknowledge
-                    let response = ChildMessage {
-                        child_id: state.child_id.clone(),
-                        text: format!("📝 Message received at head: {}", head),
-                        data: json!({"head": head}),
-                    };
+                    log(&format!("Processing head update: {}", head));
 
-                    (serde_json::to_vec(&response).unwrap(), serde_json::to_vec(&state).unwrap())
-                } else {
-                    let response = ChildMessage {
-                        child_id: state.child_id.clone(),
-                        text: "❌ No head provided in update".to_string(),
-                        data: json!({}),
-                    };
-
-                    (serde_json::to_vec(&response).unwrap(), serde_json::to_vec(&state).unwrap())
+                    // Load the message at head
+                    match state.load_message(head) {
+                        Ok(entry) => {
+                            log("Successfully loaded message");
+                            // Process based on message type
+                            match entry.data {
+                                MessageData::Chat(msg) => {
+                                    log(&format!("Processing chat message: {}", msg.content));
+                                    // Only process user messages
+                                    if msg.role == "user" {
+                                        // Extract and process commands
+                                        let commands = State::extract_fs_commands(&msg.content);
+                                        if !commands.is_empty() {
+                                            log(&format!("Found {} commands", commands.len()));
+                                            let results = state.process_fs_commands(commands);
+                                            let response = ChildMessage {
+                                                child_id: state.child_id.clone(),
+                                                text: results.join("\n\n"),
+                                                data: json!({"head": head}),
+                                            };
+                                            return (serde_json::to_vec(&response).unwrap(), serde_json::to_vec(&state).unwrap());
+                                        }
+                                    }
+                                }
+                                MessageData::ChildRollup(_) => {
+                                    // Skip processing child rollup messages
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            log(&format!("Error loading message: {}", e));
+                            let response = ChildMessage {
+                                child_id: state.child_id.clone(),
+                                text: format!("❌ Failed to load message: {}", e),
+                                data: json!({"head": head}),
+                            };
+                            return (serde_json::to_vec(&response).unwrap(), serde_json::to_vec(&state).unwrap());
+                        }
+                    }
                 }
+
+                // Default to empty response if no commands were found
+                let response = ChildMessage {
+                    child_id: state.child_id.clone(),
+                    text: String::new(),
+                    data: json!({}),
+                };
+
+                (serde_json::to_vec(&response).unwrap(), serde_json::to_vec(&state).unwrap())
             }
             Some(other) => {
                 let response = ChildMessage {
