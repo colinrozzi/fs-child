@@ -1,0 +1,5 @@
+{
+    "name": "default",
+    "base_path": ".",
+    "permissions": ["read", "write"]
+}
