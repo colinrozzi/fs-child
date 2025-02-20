@@ -1,0 +1,19 @@
+                                    let commands = State::extract_fs_commands(&msg.content, &current_state.name);
+                                    if !commands.is_empty() {
+                                        log(&format!("Found {} commands for {}", commands.len(), current_state.name));
+                                        let results = current_state.process_fs_commands(commands);
+                                        let response = ChildMessage {
+                                            child_id: child_id.clone(),
+                                            text: results.join("\n\n"),
+                                            data: json!({"head": head}),
+                                        };
+                                        return (
+                                            serde_json::to_vec(&response).unwrap(),
+                                            serde_json::to_vec(&current_state).unwrap(),
+                                        );
+                                    }
+                                }
+                                MessageData::ChildRollup(_) => {
+                                    // Skip processing child rollup messages
+                                }
+                            }
