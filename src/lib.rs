@@ -159,7 +159,7 @@ impl State {
             };
 
             if !operation_allowed {
-                results.push(format!("❌ Operation '{}' not permitted", cmd.operation));
+                results.push(format!("Operation '{}' not permitted", cmd.operation));
                 continue;
             }
 
@@ -167,54 +167,46 @@ impl State {
                 "read-file" => match read_file(&path) {
                     Ok(content) => {
                         if let Ok(content_str) = String::from_utf8(content) {
-                            format!(
-                                "📄 File content of '{}': 
-```
-{}
-```",
-                                cmd.path, content_str
-                            )
+                            format!("Contents of '{}':
+{}", cmd.path, content_str)
                         } else {
-                            format!("❌ Failed to decode file content of '{}'", cmd.path)
+                            format!("Failed to decode file content of '{}'", cmd.path)
                         }
                     }
-                    Err(e) => format!("❌ Failed to read file '{}': {}", cmd.path, e),
+                    Err(e) => format!("Failed to read file '{}': {}", cmd.path, e),
                 },
                 "write-file" => {
                     if let Some(content) = cmd.content {
                         match write_file(&path, &content) {
-                            Ok(_) => format!("✅ Successfully wrote to file '{}'", cmd.path),
-                            Err(e) => format!("❌ Failed to write to file '{}': {}", cmd.path, e),
+                            Ok(_) => format!("Successfully wrote to file '{}'", cmd.path),
+                            Err(e) => format!("Failed to write to file '{}': {}", cmd.path, e),
                         }
                     } else {
-                        "❌ No content provided for write operation".to_string()
+                        "No content provided for write operation".to_string()
                     }
                 }
                 "list-files" => match list_files(&path) {
                     Ok(files) => {
                         let formatted_files = files
                             .iter()
-                            .map(|f| format!("  - {}", f))
+                            .map(|f| format!("  {}", f))
                             .collect::<Vec<_>>()
                             .join("
 ");
-                        format!(
-                            "📁 Contents of '{}':
-{}",
-                            cmd.path, formatted_files
-                        )
+                        format!("Contents of '{}':
+{}", cmd.path, formatted_files)
                     }
-                    Err(e) => format!("❌ Failed to list files in '{}': {}", cmd.path, e),
+                    Err(e) => format!("Failed to list files in '{}': {}", cmd.path, e),
                 },
                 "create-dir" => match create_dir(&path) {
-                    Ok(_) => format!("✅ Created directory '{}'", cmd.path),
-                    Err(e) => format!("❌ Failed to create directory '{}': {}", cmd.path, e),
+                    Ok(_) => format!("Created directory '{}'", cmd.path),
+                    Err(e) => format!("Failed to create directory '{}': {}", cmd.path, e),
                 },
                 "delete-file" => match delete_file(&path) {
-                    Ok(_) => format!("✅ Deleted file '{}'", cmd.path),
-                    Err(e) => format!("❌ Failed to delete file '{}': {}", cmd.path, e),
+                    Ok(_) => format!("Deleted file '{}'", cmd.path),
+                    Err(e) => format!("Failed to delete file '{}': {}", cmd.path, e),
                 },
-                _ => format!("❌ Unknown operation: {}", cmd.operation),
+                _ => format!("Unknown operation: {}", cmd.operation),
             };
             results.push(result);
         }
@@ -226,7 +218,7 @@ impl State {
         let mut commands = Vec::new();
 
         // Extract commands between named fs-command tags
-        let marker = format!("<fs-command name="{}">", instance_name);
+        let marker = format!("<fs-command name=\"{}\">", instance_name);
         let parts: Vec<&str> = content.split(&marker).collect();
         
         for part in parts.iter().skip(1) {
@@ -318,23 +310,20 @@ impl MessageServerClientGuest for Component {
                             current_state.child_id, current_state.store_id
                         ));
 
-                        // Respond with a welcome message that includes the instance name
                         let response = ChildMessage {
                             child_id: child_id.to_string(),
-                            text: format!("🤖 Filesystem operations for '{}' are now available! You can use commands like:
-                                  - read-file: Read file contents
-                                  - write-file: Write to a file
-                                  - list-files: List directory contents
-                                  - create-dir: Create a new directory
-                                  - delete-file: Delete a file
+                            text: format!("Filesystem operations for '{}' initialized. Available commands:
+read-file: Read file contents
+write-file: Write to a file
+list-files: List directory contents
+create-dir: Create a new directory
+delete-file: Delete a file
 
-                                  Use XML syntax like:
-                                  ```xml
-                                  <fs-command name="{}">
-                                    <operation>list-files</operation>
-                                    <path>.</path>
-                                  </fs-command>
-                                  ```", current_state.name, current_state.name),
+Example usage:
+<fs-command name=\"{}\">
+  <operation>list-files</operation>
+  <path>.</path>
+</fs-command>", current_state.name, current_state.name),
                             data: json!({}),
                         };
 
@@ -347,7 +336,7 @@ impl MessageServerClientGuest for Component {
                 log("Failed to get child_id or store_id from introduction");
                 let response = ChildMessage {
                     child_id: current_state.child_id.clone().unwrap_or_default(),
-                    text: "❌ Failed to get child_id or store_id from introduction".to_string(),
+                    text: "Failed to get child_id or store_id from introduction".to_string(),
                     data: json!({}),
                 };
                 (
@@ -363,15 +352,12 @@ impl MessageServerClientGuest for Component {
                     log(&format!("Processing head update: {}", head));
                     log(&format!("Loading message with ID: {}", head));
 
-                    // Load the message at head
                     match current_state.load_message(head) {
                         Ok(entry) => {
                             log("Successfully loaded message");
-                            // Process based on message type
                             match entry.data {
                                 MessageData::Chat(msg) => {
                                     log(&format!("Processing chat message: {}", msg.content));
-                                    // Extract and process commands
                                     let commands = State::extract_fs_commands(&msg.content, &current_state.name);
                                     if !commands.is_empty() {
                                         log(&format!("Found {} commands for {}", commands.len(), current_state.name));
@@ -393,11 +379,12 @@ impl MessageServerClientGuest for Component {
                                     // Skip processing child rollup messages
                                 }
                             }
+                        }
                         Err(e) => {
                             log(&format!("Error loading message: {}", e));
                             let response = ChildMessage {
                                 child_id: child_id.clone(),
-                                text: format!("❌ Failed to load message: {}", e),
+                                text: format!("Failed to load message: {}", e),
                                 data: json!({"head": head}),
                             };
                             return (
@@ -408,7 +395,6 @@ impl MessageServerClientGuest for Component {
                     }
                 }
 
-                // Default to empty response if no commands were found or missing IDs
                 let response = ChildMessage {
                     child_id: current_state.child_id.clone().unwrap_or_default(),
                     text: String::new(),
@@ -424,7 +410,7 @@ impl MessageServerClientGuest for Component {
                 log(&format!("Unknown message type: {}", other));
                 let response = ChildMessage {
                     child_id: current_state.child_id.clone().unwrap_or_default(),
-                    text: format!("❓ Unknown message type: {}", other),
+                    text: format!("Unknown message type: {}", other),
                     data: json!({}),
                 };
                 (
@@ -436,7 +422,7 @@ impl MessageServerClientGuest for Component {
                 log("No message type provided");
                 let response = ChildMessage {
                     child_id: current_state.child_id.clone().unwrap_or_default(),
-                    text: "❌ No message type provided".to_string(),
+                    text: "No message type provided".to_string(),
                     data: json!({}),
                 };
                 (
