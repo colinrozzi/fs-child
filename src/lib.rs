@@ -153,7 +153,9 @@ impl State {
 
             let operation_allowed = match cmd.operation.as_str() {
                 "read-file" | "list-files" => self.permissions.contains(&"read".to_string()),
-                "write-file" | "create-dir" => self.permissions.contains(&"write".to_string()),
+                "write-file" | "create-dir" | "edit-file" => {
+                    self.permissions.contains(&"write".to_string())
+                }
                 "delete-file" => self.permissions.contains(&"write".to_string()),
                 _ => false,
             };
@@ -167,8 +169,11 @@ impl State {
                 "read-file" => match read_file(&path) {
                     Ok(content) => {
                         if let Ok(content_str) = String::from_utf8(content) {
-                            format!("Contents of '{}':
-{}", cmd.path, content_str)
+                            format!(
+                                "Contents of '{}':
+{}",
+                                cmd.path, content_str
+                            )
                         } else {
                             format!("Failed to decode file content of '{}'", cmd.path)
                         }
@@ -185,16 +190,44 @@ impl State {
                         "No content provided for write operation".to_string()
                     }
                 }
+                "edit-file" => match (cmd.old_text, cmd.new_text) {
+                    (Some(old_text), Some(new_text)) => match read_file(&path) {
+                        Ok(content) => {
+                            if let Ok(mut content_str) = String::from_utf8(content) {
+                                if content_str.contains(&old_text) {
+                                    content_str = content_str.replace(&old_text, &new_text);
+                                    match write_file(&path, &content_str) {
+                                        Ok(_) => format!("Successfully edited file '{}'", cmd.path),
+                                        Err(e) => format!(
+                                            "Failed to write edited content to '{}': {}",
+                                            cmd.path, e
+                                        ),
+                                    }
+                                } else {
+                                    format!("Text to replace not found in '{}'", cmd.path)
+                                }
+                            } else {
+                                format!("Failed to decode file content of '{}'", cmd.path)
+                            }
+                        }
+                        Err(e) => format!("Failed to read file '{}': {}", cmd.path, e),
+                    },
+                    _ => {
+                        "Both old_text and new_text must be provided for edit operation".to_string()
+                    }
+                },
                 "list-files" => match list_files(&path) {
                     Ok(files) => {
                         let formatted_files = files
                             .iter()
-                            .map(|f| format!("  {}", f))
+                            .map(|f| format!(" {}", f))
                             .collect::<Vec<_>>()
-                            .join("
-");
-                        format!("Contents of '{}':
-{}", cmd.path, formatted_files)
+                            .join("\n");
+                        format!(
+                            "Contents of '{}':
+{}",
+                            cmd.path, formatted_files
+                        )
                     }
                     Err(e) => format!("Failed to list files in '{}': {}", cmd.path, e),
                 },
@@ -220,7 +253,7 @@ impl State {
         // Extract commands between named fs-command tags
         let marker = format!("<fs-command name=\"{}\">", instance_name);
         let parts: Vec<&str> = content.split(&marker).collect();
-        
+
         for part in parts.iter().skip(1) {
             if let Some(cmd_end) = part.find("</fs-command>") {
                 let cmd_xml = &part[..cmd_end];
@@ -285,7 +318,10 @@ impl ActorGuest for Component {
     fn init(data: Option<Json>) -> Json {
         log("Initializing filesystem child actor");
         let initial_state = State::new(data);
-        log(&format!("State initialized with name: {}", initial_state.name));
+        log(&format!(
+            "State initialized with name: {}",
+            initial_state.name
+        ));
         serde_json::to_vec(&initial_state).unwrap()
     }
 }
@@ -312,18 +348,30 @@ impl MessageServerClientGuest for Component {
 
                         let response = ChildMessage {
                             child_id: child_id.to_string(),
-                            text: format!("Filesystem operations for '{}' initialized. Available commands:
+                            text: format!(
+                                "Filesystem operations for '{}' initialized. Available commands:
 read-file: Read file contents
 write-file: Write to a file
+edit-file: Edit file contents
 list-files: List directory contents
 create-dir: Create a new directory
 delete-file: Delete a file
 
 Example usage:
 <fs-command name=\"{}\">
-  <operation>list-files</operation>
-  <path>.</path>
-</fs-command>", current_state.name, current_state.name),
+<operation>list-files</operation>
+<path>.</path>
+</fs-command>
+
+Edit file example:
+<fs-command name=\"{}\">
+<operation>edit-file</operation>
+<path>file.txt</path>
+<old_text>text to replace</old_text>
+<new_text>replacement text</new_text>
+</fs-command>",
+                                current_state.name, current_state.name, current_state.name
+                            ),
                             data: json!({}),
                         };
 
@@ -358,15 +406,20 @@ Example usage:
                             match entry.data {
                                 MessageData::Chat(msg) => {
                                     log(&format!("Processing chat message: {}", msg.content));
-                                    let commands = State::extract_fs_commands(&msg.content, &current_state.name);
+                                    let commands = State::extract_fs_commands(
+                                        &msg.content,
+                                        &current_state.name,
+                                    );
                                     if !commands.is_empty() {
-                                        log(&format!("Found {} commands for {}", commands.len(), current_state.name));
+                                        log(&format!(
+                                            "Found {} commands for {}",
+                                            commands.len(),
+                                            current_state.name
+                                        ));
                                         let results = current_state.process_fs_commands(commands);
                                         let response = ChildMessage {
                                             child_id: child_id.clone(),
-                                            text: results.join("
-
-"),
+                                            text: results.join("\n\n"),
                                             data: json!({"head": head}),
                                         };
                                         return (
