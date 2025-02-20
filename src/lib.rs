@@ -169,11 +169,7 @@ impl State {
                 "read-file" => match read_file(&path) {
                     Ok(content) => {
                         if let Ok(content_str) = String::from_utf8(content) {
-                            format!(
-                                "Contents of '{}':
-{}",
-                                cmd.path, content_str
-                            )
+                            format!("Contents of '{}': {}", cmd.path, content_str)
                         } else {
                             format!("Failed to decode file content of '{}'", cmd.path)
                         }
@@ -223,11 +219,7 @@ impl State {
                             .map(|f| format!(" {}", f))
                             .collect::<Vec<_>>()
                             .join("\n");
-                        format!(
-                            "Contents of '{}':
-{}",
-                            cmd.path, formatted_files
-                        )
+                        format!("Contents of '{}': {}", cmd.path, formatted_files)
                     }
                     Err(e) => format!("Failed to list files in '{}': {}", cmd.path, e),
                 },
@@ -348,30 +340,62 @@ impl MessageServerClientGuest for Component {
 
                         let response = ChildMessage {
                             child_id: child_id.to_string(),
-                            text: format!(
-                                "Filesystem operations for '{}' initialized. Available commands:
-read-file: Read file contents
-write-file: Write to a file
-edit-file: Edit file contents
-list-files: List directory contents
-create-dir: Create a new directory
-delete-file: Delete a file
+                            text: "Filesystem operations for '{name}' initialized.
 
-Example usage:
-<fs-command name=\"{}\">
-<operation>list-files</operation>
-<path>.</path>
+Available commands (with required permissions):
+- read-file (requires 'read'): Read file contents
+- write-file (requires 'write'): Write to a file
+- edit-file (requires 'write'): Edit file contents by replacing text
+- list-files (requires 'read'): List directory contents
+- create-dir (requires 'write'): Create a new directory
+- delete-file (requires 'write'): Delete a file
+
+Command formats:
+
+1. List files:
+<fs-command name=\"{name}\">
+  <operation>list-files</operation>
+  <path>.</path>
 </fs-command>
 
-Edit file example:
-<fs-command name=\"{}\">
-<operation>edit-file</operation>
-<path>file.txt</path>
-<old_text>text to replace</old_text>
-<new_text>replacement text</new_text>
-</fs-command>",
-                                current_state.name, current_state.name, current_state.name
-                            ),
+2. Read file:
+<fs-command name=\"{name}\">
+  <operation>read-file</operation>
+  <path>src/file.rs</path>
+</fs-command>
+
+3. Write file:
+<fs-command name=\"{name}\">
+  <operation>write-file</operation>
+  <path>src/file.rs</path>
+  <content>file contents here</content>
+</fs-command>
+
+4. Edit file:
+<fs-command name=\"{name}\">
+  <operation>edit-file</operation>
+  <path>src/file.rs</path>
+  <old_text>text to find</old_text>
+  <new_text>replacement text</new_text>
+</fs-command>
+
+5. Create directory:
+<fs-command name=\"{name}\">
+  <operation>create-dir</operation>
+  <path>new_directory</path>
+</fs-command>
+
+6. Delete file:
+<fs-command name=\"{name}\">
+  <operation>delete-file</operation>
+  <path>file_to_delete.txt</path>
+</fs-command>
+
+Current permissions: {permissions}
+Base path: {base_path}"
+                                .replace("{name}", &current_state.name)
+                                .replace("{permissions}", &current_state.permissions.join(", "))
+                                .replace("{base_path}", &current_state.base_path),
                             data: json!({}),
                         };
 
