@@ -43,9 +43,34 @@ enum MessageData {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-struct Message {
-    role: String,
-    content: String,
+pub enum Message {
+    User {
+        content: String,
+    },
+    Assistant {
+        content: String,
+        id: String,
+        model: String,
+        stop_reason: String,
+        stop_sequence: Option<String>,
+        message_type: String,
+        usage: Usage,
+    },
+}
+
+impl Message {
+    pub fn content(&self) -> &str {
+        match self {
+            Self::User { content } => content,
+            Self::Assistant { content, .. } => content,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Usage {
+    pub input_tokens: u32,
+    pub output_tokens: u32,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -391,11 +416,9 @@ Command formats:
   <path>file_to_delete.txt</path>
 </fs-command>
 
-Current permissions: {permissions}
-Base path: {base_path}"
+Current permissions: {permissions}"
                                 .replace("{name}", &current_state.name)
-                                .replace("{permissions}", &current_state.permissions.join(", "))
-                                .replace("{base_path}", &current_state.base_path),
+                                .replace("{permissions}", &current_state.permissions.join(", ")),
                             data: json!({}),
                         };
 
@@ -429,9 +452,9 @@ Base path: {base_path}"
                             log("Successfully loaded message");
                             match entry.data {
                                 MessageData::Chat(msg) => {
-                                    log(&format!("Processing chat message: {}", msg.content));
+                                    log(&format!("Processing chat message: {}", msg.content()));
                                     let commands = State::extract_fs_commands(
-                                        &msg.content,
+                                        &msg.content(),
                                         &current_state.name,
                                     );
                                     if !commands.is_empty() {
