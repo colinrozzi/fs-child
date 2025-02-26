@@ -332,21 +332,33 @@ impl State {
 struct Component;
 
 impl ActorGuest for Component {
-    fn init(data: Option<Json>) -> Json {
+    fn init(data: Option<Json>, params: (String,)) -> Result<(Option<Vec<u8>>,), String> {
         log("Initializing filesystem child actor");
         let initial_state = State::new(data);
         log(&format!(
             "State initialized with name: {}",
             initial_state.name
         ));
-        serde_json::to_vec(&initial_state).unwrap()
+        Ok((Some(serde_json::to_vec(&initial_state).unwrap()),))
     }
 }
 
 impl MessageServerClientGuest for Component {
-    fn handle_request(msg: Json, state: Json) -> (Json, Json) {
-        let mut current_state: State = serde_json::from_slice(&state).unwrap();
+    fn handle_request(
+        state: Option<Vec<u8>>,
+        params: (Vec<u8>,),
+    ) -> Result<(Option<Vec<u8>>, (Vec<u8>,)), String> {
+        log("Processing message request");
+        log(&format!("State: {:?}", state));
+        let mut current_state: State = serde_json::from_slice(&state.unwrap()).unwrap();
+        log(&format!("Current state: {:?}", current_state));
+        let msg = params.0;
+        log(&format!(
+            "Received message: {}",
+            String::from_utf8_lossy(&msg)
+        ));
         let request: Value = serde_json::from_slice(&msg).unwrap();
+        log(&format!("Received request: {}", request));
 
         match request["msg_type"].as_str() {
             Some("introduction") => {
@@ -422,10 +434,10 @@ Current permissions: {permissions}"
                             data: json!({}),
                         };
 
-                        return (
-                            serde_json::to_vec(&response).unwrap(),
-                            serde_json::to_vec(&current_state).unwrap(),
-                        );
+                        return Ok((
+                            Some(serde_json::to_vec(&current_state).unwrap()),
+                            (serde_json::to_vec(&response).unwrap(),),
+                        ));
                     }
                 }
                 log("Failed to get child_id or store_id from introduction");
@@ -434,10 +446,10 @@ Current permissions: {permissions}"
                     text: "Failed to get child_id or store_id from introduction".to_string(),
                     data: json!({}),
                 };
-                (
-                    serde_json::to_vec(&response).unwrap(),
-                    serde_json::to_vec(&current_state).unwrap(),
-                )
+                Ok((
+                    Some(serde_json::to_vec(&current_state).unwrap()),
+                    (serde_json::to_vec(&response).unwrap(),),
+                ))
             }
             Some("head-update") => {
                 if let (Some(child_id), Some(head)) = (
@@ -469,10 +481,10 @@ Current permissions: {permissions}"
                                             text: results.join("\n\n"),
                                             data: json!({"head": head}),
                                         };
-                                        return (
-                                            serde_json::to_vec(&response).unwrap(),
-                                            serde_json::to_vec(&current_state).unwrap(),
-                                        );
+                                        return Ok((
+                                            Some(serde_json::to_vec(&current_state).unwrap()),
+                                            (serde_json::to_vec(&response).unwrap(),),
+                                        ));
                                     }
                                 }
                                 MessageData::ChildRollup(_) => {
@@ -487,10 +499,10 @@ Current permissions: {permissions}"
                                 text: format!("Failed to load message: {}", e),
                                 data: json!({"head": head}),
                             };
-                            return (
-                                serde_json::to_vec(&response).unwrap(),
-                                serde_json::to_vec(&current_state).unwrap(),
-                            );
+                            return Ok((
+                                Some(serde_json::to_vec(&current_state).unwrap()),
+                                (serde_json::to_vec(&response).unwrap(),),
+                            ));
                         }
                     }
                 }
@@ -501,10 +513,10 @@ Current permissions: {permissions}"
                     data: json!({}),
                 };
 
-                (
-                    serde_json::to_vec(&response).unwrap(),
-                    serde_json::to_vec(&current_state).unwrap(),
-                )
+                Ok((
+                    Some(serde_json::to_vec(&current_state).unwrap()),
+                    (serde_json::to_vec(&response).unwrap(),),
+                ))
             }
             Some(other) => {
                 log(&format!("Unknown message type: {}", other));
@@ -513,10 +525,10 @@ Current permissions: {permissions}"
                     text: format!("Unknown message type: {}", other),
                     data: json!({}),
                 };
-                (
-                    serde_json::to_vec(&response).unwrap(),
-                    serde_json::to_vec(&current_state).unwrap(),
-                )
+                Ok((
+                    Some(serde_json::to_vec(&current_state).unwrap()),
+                    (serde_json::to_vec(&response).unwrap(),),
+                ))
             }
             None => {
                 log("No message type provided");
@@ -525,16 +537,19 @@ Current permissions: {permissions}"
                     text: "No message type provided".to_string(),
                     data: json!({}),
                 };
-                (
-                    serde_json::to_vec(&response).unwrap(),
-                    serde_json::to_vec(&current_state).unwrap(),
-                )
+                Ok((
+                    Some(serde_json::to_vec(&current_state).unwrap()),
+                    (serde_json::to_vec(&response).unwrap(),),
+                ))
             }
         }
     }
 
-    fn handle_send(msg: Json, state: Json) -> Json {
-        state
+    fn handle_send(
+        state: Option<Vec<u8>>,
+        _params: (Vec<u8>,),
+    ) -> Result<(Option<Vec<u8>>,), String> {
+        Ok((state,))
     }
 }
 
