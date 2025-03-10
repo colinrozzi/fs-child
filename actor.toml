@@ -1,11 +1,11 @@
 name = "fs-child"
 version = "0.1.0"
-description = "filesystem child actor"
+description = "Filesystem child actor that provides file and directory operations"
 component_path = "/Users/colinrozzi/work/actors/fs-child/target/wasm32-unknown-unknown/release/fs_child.wasm"
 init_data = "/Users/colinrozzi/work/actors/fs-child/assets/init.json"
 
 [interface]
-implements = "ntwk:theater/single-actor"
+implements = "ntwk:theater/actor"
 requires = []
 
 [[handlers]]

@@ -77,6 +77,8 @@ pub struct Usage {
 struct ChildMessage {
     child_id: String,
     text: String,
+    html: Option<String>,
+    parent_id: Option<String>,
     data: Value,
 }
 
@@ -170,7 +172,7 @@ impl State {
         Err("Failed to load message from store".into())
     }
 
-    fn process_fs_commands(&self, commands: Vec<FsCommand>) -> Vec<String> {
+    fn process_fs_commands(&self, commands: Vec<FsCommand>) -> Vec<(String, String)> {
         let mut results = Vec::new();
 
         for cmd in commands {
@@ -186,7 +188,7 @@ impl State {
             };
 
             if !operation_allowed {
-                results.push(format!("Operation '{}' not permitted", cmd.operation));
+                results.push((cmd.operation.clone(), format!("Operation '{}' not permitted", cmd.operation)));
                 continue;
             }
 
@@ -194,21 +196,21 @@ impl State {
                 "read-file" => match read_file(&path) {
                     Ok(content) => {
                         if let Ok(content_str) = String::from_utf8(content) {
-                            format!("Contents of '{}': {}", cmd.path, content_str)
+                            (cmd.operation.clone(), format!("Contents of '{}': {}", cmd.path, content_str))
                         } else {
-                            format!("Failed to decode file content of '{}'", cmd.path)
+                            (cmd.operation.clone(), format!("Failed to decode file content of '{}'", cmd.path))
                         }
                     }
-                    Err(e) => format!("Failed to read file '{}': {}", cmd.path, e),
+                    Err(e) => (cmd.operation.clone(), format!("Failed to read file '{}': {}", cmd.path, e)),
                 },
                 "write-file" => {
                     if let Some(content) = cmd.content {
                         match write_file(&path, &content) {
-                            Ok(_) => format!("Successfully wrote to file '{}'", cmd.path),
-                            Err(e) => format!("Failed to write to file '{}': {}", cmd.path, e),
+                            Ok(_) => (cmd.operation.clone(), format!("Successfully wrote to file '{}'", cmd.path)),
+                            Err(e) => (cmd.operation.clone(), format!("Failed to write to file '{}': {}", cmd.path, e)),
                         }
                     } else {
-                        "No content provided for write operation".to_string()
+                        (cmd.operation.clone(), "No content provided for write operation".to_string())
                     }
                 }
                 "edit-file" => match (cmd.old_text, cmd.new_text) {
@@ -218,23 +220,23 @@ impl State {
                                 if content_str.contains(&old_text) {
                                     content_str = content_str.replace(&old_text, &new_text);
                                     match write_file(&path, &content_str) {
-                                        Ok(_) => format!("Successfully edited file '{}'", cmd.path),
-                                        Err(e) => format!(
+                                        Ok(_) => (cmd.operation.clone(), format!("Successfully edited file '{}'", cmd.path)),
+                                        Err(e) => (cmd.operation.clone(), format!(
                                             "Failed to write edited content to '{}': {}",
                                             cmd.path, e
-                                        ),
+                                        )),
                                     }
                                 } else {
-                                    format!("Text to replace not found in '{}'", cmd.path)
+                                    (cmd.operation.clone(), format!("Text to replace not found in '{}'", cmd.path))
                                 }
                             } else {
-                                format!("Failed to decode file content of '{}'", cmd.path)
+                                (cmd.operation.clone(), format!("Failed to decode file content of '{}'", cmd.path))
                             }
                         }
-                        Err(e) => format!("Failed to read file '{}': {}", cmd.path, e),
+                        Err(e) => (cmd.operation.clone(), format!("Failed to read file '{}': {}", cmd.path, e)),
                     },
                     _ => {
-                        "Both old_text and new_text must be provided for edit operation".to_string()
+                        (cmd.operation.clone(), "Both old_text and new_text must be provided for edit operation".to_string())
                     }
                 },
                 "list-files" => match list_files(&path) {
@@ -244,19 +246,19 @@ impl State {
                             .map(|f| format!(" {}", f))
                             .collect::<Vec<_>>()
                             .join("\n");
-                        format!("Contents of '{}': {}", cmd.path, formatted_files)
+                        (cmd.operation.clone(), format!("Contents of '{}': {}", cmd.path, formatted_files))
                     }
-                    Err(e) => format!("Failed to list files in '{}': {}", cmd.path, e),
+                    Err(e) => (cmd.operation.clone(), format!("Failed to list files in '{}': {}", cmd.path, e)),
                 },
                 "create-dir" => match create_dir(&path) {
-                    Ok(_) => format!("Created directory '{}'", cmd.path),
-                    Err(e) => format!("Failed to create directory '{}': {}", cmd.path, e),
+                    Ok(_) => (cmd.operation.clone(), format!("Created directory '{}'", cmd.path)),
+                    Err(e) => (cmd.operation.clone(), format!("Failed to create directory '{}': {}", cmd.path, e)),
                 },
                 "delete-file" => match delete_file(&path) {
-                    Ok(_) => format!("Deleted file '{}'", cmd.path),
-                    Err(e) => format!("Failed to delete file '{}': {}", cmd.path, e),
+                    Ok(_) => (cmd.operation.clone(), format!("Deleted file '{}'", cmd.path)),
+                    Err(e) => (cmd.operation.clone(), format!("Failed to delete file '{}': {}", cmd.path, e)),
                 },
-                _ => format!("Unknown operation: {}", cmd.operation),
+                _ => (cmd.operation.clone(), format!("Unknown operation: {}", cmd.operation)),
             };
             results.push(result);
         }
@@ -375,9 +377,8 @@ impl MessageServerClientGuest for Component {
                             current_state.child_id, current_state.store_id
                         ));
 
-                        let response = ChildMessage {
-                            child_id: child_id.to_string(),
-                            text: "Filesystem operations for '{name}' initialized.
+                        // Create text version
+                        let text = "Filesystem operations for '{name}' initialized.
 
 Available commands (with required permissions):
 - read-file (requires 'read'): Read file contents
@@ -430,7 +431,51 @@ Command formats:
 
 Current permissions: {permissions}"
                                 .replace("{name}", &current_state.name)
-                                .replace("{permissions}", &current_state.permissions.join(", ")),
+                                .replace("{permissions}", &current_state.permissions.join(", "));
+
+                        // Create HTML version with better styling
+                        let html = format!(r#"<div style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 1rem;">
+                            <h3 style="color: var(--accent-primary); margin-bottom: 0.75rem;">Filesystem Operations</h3>
+                            <p>Operations for <strong>{name}</strong> initialized with permissions: <code>{permissions}</code></p>
+                            
+                            <div style="margin-top: 1rem;">
+                                <h4 style="color: var(--text-primary);">Available Commands:</h4>
+                                <ul>
+                                    <li><code>read-file</code> - Read file contents (requires 'read')</li>
+                                    <li><code>write-file</code> - Write to a file (requires 'write')</li>
+                                    <li><code>edit-file</code> - Edit file contents (requires 'write')</li>
+                                    <li><code>list-files</code> - List directory contents (requires 'read')</li>
+                                    <li><code>create-dir</code> - Create a new directory (requires 'write')</li>
+                                    <li><code>delete-file</code> - Delete a file (requires 'write')</li>
+                                </ul>
+                            </div>
+                            
+                            <div style="margin-top: 1rem;">
+                                <h4 style="color: var(--text-primary);">Command Examples:</h4>
+                                <div style="background: var(--bg-tertiary); padding: 0.75rem; border-radius: var(--radius-sm); margin-bottom: 0.75rem;">
+                                    <pre style="margin: 0;"><code>&lt;fs-command name="{name}"&gt;
+  &lt;operation&gt;list-files&lt;/operation&gt;
+  &lt;path&gt;.&lt;/path&gt;
+&lt;/fs-command&gt;</code></pre>
+                                </div>
+                                <div style="background: var(--bg-tertiary); padding: 0.75rem; border-radius: var(--radius-sm);">
+                                    <pre style="margin: 0;"><code>&lt;fs-command name="{name}"&gt;
+  &lt;operation&gt;read-file&lt;/operation&gt;
+  &lt;path&gt;src/file.rs&lt;/path&gt;
+&lt;/fs-command&gt;</code></pre>
+                                </div>
+                            </div>
+                        </div>
+                        "#, name = &current_state.name, permissions = &current_state.permissions.join(", "));
+
+                        // Get the head ID from the introduction message if available
+                        let head_id = data.get("head").and_then(|h| h.as_str()).map(String::from);
+                        
+                        let response = ChildMessage {
+                            child_id: child_id.to_string(),
+                            text,
+                            html: Some(html),
+                            parent_id: head_id,
                             data: json!({}),
                         };
 
@@ -444,6 +489,8 @@ Current permissions: {permissions}"
                 let response = ChildMessage {
                     child_id: current_state.child_id.clone().unwrap_or_default(),
                     text: "Failed to get child_id or store_id from introduction".to_string(),
+                    html: Some("<div style=\"color: var(--text-primary); padding: 0.5rem;\"><p>Failed to get child_id or store_id from introduction</p></div>".to_string()),
+                    parent_id: None,
                     data: json!({}),
                 };
                 Ok((
@@ -476,9 +523,49 @@ Current permissions: {permissions}"
                                             current_state.name
                                         ));
                                         let results = current_state.process_fs_commands(commands);
+                                        
+                                        // Format text results
+                                        let results_text = results.iter()
+                                            .map(|(op, result)| result.clone())
+                                            .collect::<Vec<_>>()
+                                            .join("\n\n");
+                                        
+                                        // Create HTML version with nice formatting based on operation type
+                                        let mut html_parts = Vec::new();
+                                        
+                                        for (op_type, result) in &results {
+                                            let (icon, color) = match op_type.as_str() {
+                                                "read-file" => ("📄", "#3B82F6"), // Blue for read
+                                                "write-file" => ("✏️", "#10B981"), // Green for write
+                                                "edit-file" => ("🔄", "#8B5CF6"),   // Purple for edit
+                                                "list-files" => ("📁", "#F59E0B"), // Yellow for list
+                                                "create-dir" => ("📂", "#10B981"), // Green for create
+                                                "delete-file" => ("🗑️", "#EF4444"), // Red for delete
+                                                _ => ("❓", "#6B7280"),            // Gray for unknown
+                                            };
+                                            
+                                            html_parts.push(format!(r#"<div style="margin-bottom: 1rem;">
+                                                <div style="display: flex; align-items: center; margin-bottom: 0.5rem;">
+                                                    <span style="margin-right: 0.5rem;">{icon}</span>
+                                                    <span style="color: {color}; font-weight: bold;">{op_type}</span>
+                                                </div>
+                                                <div style="background: var(--bg-tertiary); padding: 0.75rem; border-radius: var(--radius-sm);">
+                                                    <pre style="margin: 0; white-space: pre-wrap;"><code>{result}</code></pre>
+                                                </div>
+                                            </div>"#, icon = icon, color = color, op_type = op_type, result = result));
+                                        }
+                                        
+                                        let html = format!(r#"<div style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 1rem;">
+                                            <h3 style="color: var(--accent-primary); margin-bottom: 0.75rem;">Filesystem Operation Results</h3>
+                                            {results_html}
+                                        </div>
+                                        "#, results_html = html_parts.join(""));
+                                        
                                         let response = ChildMessage {
                                             child_id: child_id.clone(),
-                                            text: results.join("\n\n"),
+                                            text: results_text,
+                                            html: Some(html),
+                                            parent_id: Some(head.to_string()),
                                             data: json!({"head": head}),
                                         };
                                         return Ok((
@@ -494,9 +581,20 @@ Current permissions: {permissions}"
                         }
                         Err(e) => {
                             log(&format!("Error loading message: {}", e));
+                            let error_text = format!("Failed to load message: {}", e);
+                            let html = format!(r#"<div style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 1rem;">
+                                <h3 style="color: #EF4444; margin-bottom: 0.75rem;">Error</h3>
+                                <div style="background: var(--bg-tertiary); padding: 0.75rem; border-radius: var(--radius-sm);">
+                                    <p style="margin: 0;">{}</p>
+                                </div>
+                            </div>
+                            "#, error_text);
+                            
                             let response = ChildMessage {
                                 child_id: child_id.clone(),
-                                text: format!("Failed to load message: {}", e),
+                                text: error_text,
+                                html: Some(html),
+                                parent_id: Some(head.to_string()),
                                 data: json!({"head": head}),
                             };
                             return Ok((
@@ -510,6 +608,8 @@ Current permissions: {permissions}"
                 let response = ChildMessage {
                     child_id: current_state.child_id.clone().unwrap_or_default(),
                     text: String::new(),
+                    html: None,
+                    parent_id: request["data"]["head"].as_str().map(String::from),
                     data: json!({}),
                 };
 
@@ -520,9 +620,12 @@ Current permissions: {permissions}"
             }
             Some(other) => {
                 log(&format!("Unknown message type: {}", other));
+                let msg = format!("Unknown message type: {}", other);
                 let response = ChildMessage {
                     child_id: current_state.child_id.clone().unwrap_or_default(),
-                    text: format!("Unknown message type: {}", other),
+                    text: msg.clone(),
+                    html: Some(format!("<div style=\"color: var(--text-primary); padding: 0.5rem;\"><p>{}</p></div>", msg)),
+                    parent_id: request["data"]["head"].as_str().map(String::from),
                     data: json!({}),
                 };
                 Ok((
@@ -535,6 +638,8 @@ Current permissions: {permissions}"
                 let response = ChildMessage {
                     child_id: current_state.child_id.clone().unwrap_or_default(),
                     text: "No message type provided".to_string(),
+                    html: Some("<div style=\"color: var(--text-primary); padding: 0.5rem;\"><p>No message type provided</p></div>".to_string()),
+                    parent_id: request["data"]["head"].as_str().map(String::from),
                     data: json!({}),
                 };
                 Ok((
